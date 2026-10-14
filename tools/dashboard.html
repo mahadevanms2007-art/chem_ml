@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Battery Leak Station — Live Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #0a0d14;
+      --surface: rgba(255,255,255,0.04);
+      --border:  rgba(255,255,255,0.08);
+      --text:    #e8eaf0;
+      --muted:   #6b7280;
+      --accent:  #6366f1;
+      --good:    #22c55e;
+      --suspect: #f59e0b;
+      --leaking: #ef4444;
+      --none:    #6b7280;
+    }
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden; }
+    body::before {
+      content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+      background: radial-gradient(ellipse 80% 50% at 20% 10%,rgba(99,102,241,.12) 0%,transparent 60%),
+                  radial-gradient(ellipse 60% 40% at 80% 80%,rgba(34,197,94,.07) 0%,transparent 60%);
+    }
+    main { position:relative; z-index:1; max-width:1100px; margin:0 auto; padding:2rem 1.5rem 4rem; }
+    header { display:flex; align-items:center; justify-content:space-between; margin-bottom:2.5rem; flex-wrap:wrap; gap:1rem; }
+    .logo { display:flex; align-items:center; gap:.75rem; }
+    .logo-icon { width:40px; height:40px; }
+    h1 { font-size:1.5rem; font-weight:700; letter-spacing:-.02em; }
+    h1 span { color:var(--accent); }
+    #connectBtn {
+      display:flex; align-items:center; gap:.5rem;
+      padding:.6rem 1.4rem; border-radius:999px; border:none; cursor:pointer;
+      font-family:inherit; font-size:.9rem; font-weight:600;
+      background:var(--accent); color:#fff;
+      transition:opacity .2s,transform .15s,box-shadow .2s;
+    }
+    #connectBtn:hover { opacity:.88; transform:translateY(-1px); box-shadow:0 4px 20px rgba(99,102,241,.4); }
+    #connectBtn.connected { background:#16a34a; }
+    .status-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:1.25rem;
+      padding:2rem; margin-bottom:1.5rem;
+      display:flex; align-items:center; gap:2rem; flex-wrap:wrap;
+      backdrop-filter:blur(12px);
+    }
+    .status-badge {
+      display:flex; align-items:center; justify-content:center;
+      width:120px; height:120px; border-radius:50%;
+      font-size:.85rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+      border:2px solid currentColor;
+      transition:color .4s,box-shadow .4s,background .4s;
+      flex-shrink:0; position:relative;
+    }
+    .status-badge::before { content:''; position:absolute; inset:-6px; border-radius:50%; border:2px solid currentColor; opacity:.3; }
+    .status-badge.GOOD    { color:var(--good);    background:rgba(34,197,94,.1);  box-shadow:0 0 30px rgba(34,197,94,.25); }
+    .status-badge.SUSPECT { color:var(--suspect); background:rgba(245,158,11,.1); box-shadow:0 0 30px rgba(245,158,11,.25); }
+    .status-badge.LEAKING { color:var(--leaking); background:rgba(239,68,68,.1);  box-shadow:0 0 30px rgba(239,68,68,.3); animation:pulse-red 1s ease-in-out infinite; }
+    .status-badge.NONE    { color:var(--none);    background:rgba(107,114,128,.1);}
+    @keyframes pulse-red { 0%,100%{box-shadow:0 0 20px rgba(239,68,68,.3)} 50%{box-shadow:0 0 50px rgba(239,68,68,.7)} }
+    .status-icon { font-size:2.2rem; display:block; margin-bottom:.25rem; }
+    .status-badge-inner { display:flex; flex-direction:column; align-items:center; }
+    .status-meta { flex:1; min-width:200px; }
+    .status-meta h2 { font-size:1.8rem; font-weight:700; margin-bottom:.25rem; }
+    .status-meta p  { color:var(--muted); font-size:.9rem; }
+    .flags { margin-top:.5rem; font-size:.85rem; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+    .last-test { margin-top:.4rem; font-size:.78rem; color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:1rem; margin-bottom:1.5rem; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:1rem; padding:1.25rem 1.25rem 1rem; backdrop-filter:blur(12px); transition:border-color .3s,transform .2s; }
+    .card:hover { border-color:rgba(255,255,255,.15); transform:translateY(-2px); }
+    .card-label { font-size:.72rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:.6rem; display:flex; align-items:center; gap:.4rem; }
+    .card-label .dot { width:6px; height:6px; border-radius:50%; }
+    .card-value { font-size:2.2rem; font-weight:700; letter-spacing:-.02em; line-height:1; font-family:'JetBrains Mono',monospace; transition:color .4s; }
+    .card-unit  { font-size:.9rem; font-weight:400; color:var(--muted); margin-left:.2rem; }
+    .card-sub   { font-size:.78rem; color:var(--muted); margin-top:.4rem; font-family:'JetBrains Mono',monospace; }
+    .bar-track  { height:6px; background:rgba(255,255,255,.07); border-radius:999px; margin-top:.75rem; overflow:hidden; }
+    .bar-fill   { height:100%; border-radius:999px; background:linear-gradient(90deg,#22c55e,#f59e0b,#ef4444); transition:width .6s cubic-bezier(.4,0,.2,1); width:0%; }
+    .gauge-wrap { margin-top:.6rem; }
+    .gauge-wrap svg { width:100%; height:auto; }
+    .log-panel { background:var(--surface); border:1px solid var(--border); border-radius:1rem; backdrop-filter:blur(12px); overflow:hidden; }
+    .log-header { display:flex; align-items:center; justify-content:space-between; padding:.9rem 1.25rem; border-bottom:1px solid var(--border); font-size:.8rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+    #clearLog { background:none; border:1px solid var(--border); color:var(--muted); font-family:inherit; font-size:.75rem; padding:.25rem .7rem; border-radius:999px; cursor:pointer; transition:border-color .2s,color .2s; }
+    #clearLog:hover { border-color:rgba(255,255,255,.2); color:var(--text); }
+    #log { height:220px; overflow-y:auto; padding:.75rem 1.25rem; font-family:'JetBrains Mono',monospace; font-size:.75rem; line-height:1.7; color:#94a3b8; }
+    #log::-webkit-scrollbar { width:4px; }
+    #log::-webkit-scrollbar-thumb { background:rgba(255,255,255,.1); border-radius:999px; }
+    .log-live    { color:#94a3b8; }
+    .log-good    { color:var(--good); }
+    .log-suspect { color:var(--suspect); }
+    .log-leaking { color:var(--leaking); font-weight:700; }
+    .log-auto    { color:var(--accent); }
+    .log-sys     { color:#475569; font-style:italic; }
+    #overlay {
+      position:fixed; inset:0; z-index:10;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      background:rgba(10,13,20,.92); backdrop-filter:blur(8px);
+      text-align:center; gap:1rem; transition:opacity .4s;
+    }
+    #overlay.hidden { opacity:0; pointer-events:none; }
+    #overlay h2 { font-size:1.6rem; font-weight:700; }
+    #overlay p  { color:var(--muted); max-width:360px; line-height:1.6; font-size:.9rem; }
+    .badge-note { background:rgba(99,102,241,.12); border:1px solid rgba(99,102,241,.3); border-radius:.5rem; padding:.6rem 1rem; font-family:'JetBrains Mono',monospace; font-size:.8rem; color:#a5b4fc; }
+    #overlayConnect { padding:.75rem 2rem; border-radius:999px; border:none; background:var(--accent); color:#fff; font-family:inherit; font-size:1rem; font-weight:600; cursor:pointer; box-shadow:0 0 30px rgba(99,102,241,.4); transition:opacity .2s,transform .15s; }
+    #overlayConnect:hover { opacity:.88; transform:translateY(-2px); }
+    .no-serial-note { color:var(--leaking); font-size:.8rem; display:none; }
+    .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--good); margin-right:.4rem; animation:blink 1.4s ease-in-out infinite; }
+    .live-dot.off { background:var(--none); animation:none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+  </style>
+</head>
+<body>
+
+<div id="overlay">
+  <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+    <rect width="64" height="64" rx="16" fill="rgba(99,102,241,0.15)"/>
+    <path d="M20 44 L32 20 L44 44" stroke="#6366f1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="48" r="2.5" fill="#6366f1"/>
+  </svg>
+  <h2>Battery Leak Station</h2>
+  <p>Connect your ESP32 via USB, then click below to select the serial port.</p>
+  <div class="badge-note">115200 baud &nbsp;&middot;&nbsp; Web Serial API &nbsp;&middot;&nbsp; Brave / Chrome / Edge</div>
+  <button id="overlayConnect">&#128268; Connect to ESP32</button>
+  <span class="no-serial-note" id="noSerialNote">Web Serial API not supported in this browser</span>
+</div>
+
+<main>
+  <header>
+    <div class="logo">
+      <svg class="logo-icon" viewBox="0 0 40 40" fill="none">
+        <rect width="40" height="40" rx="10" fill="rgba(99,102,241,0.15)"/>
+        <path d="M12 28 L20 12 L28 28" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="20" cy="31" r="2" fill="#6366f1"/>
+      </svg>
+      <h1>Leak<span>Station</span></h1>
+    </div>
+    <div style="display:flex;gap:.6rem;align-items:center;">
+      <button id="rebootBtn" style="display:none;align-items:center;gap:.4rem;padding:.6rem 1.1rem;border-radius:999px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.12);color:#fcd34d;font-family:inherit;font-size:.85rem;font-weight:600;cursor:pointer;">&#8635; Reboot ESP</button>
+      <button id="runTestBtn" style="display:none;align-items:center;gap:.4rem;padding:.6rem 1.3rem;border-radius:999px;border:1px solid rgba(99,102,241,.5);background:rgba(99,102,241,.18);color:#c7d2fe;font-family:inherit;font-size:.85rem;font-weight:600;cursor:pointer;">&#9658; Run Test</button>
+      <button id="connectBtn">&#128268; Connect</button>
+    </div>
+  </header>
+
+  <div class="status-card">
+    <div class="status-badge NONE" id="statusBadge">
+      <div class="status-badge-inner">
+        <span class="status-icon" id="statusIcon">&#9203;</span>
+        <span id="statusText">WAITING</span>
+      </div>
+    </div>
+    <div class="status-meta">
+      <h2 id="statusHeading">No Result Yet</h2>
+      <p id="statusDesc">Connect to the ESP32 and run a test to see battery status.</p>
+      <div class="flags" id="flagsText"></div>
+      <div class="last-test" id="lastTest"></div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-label"><span class="dot" style="background:#6366f1"></span>Cell Voltage</div>
+      <div class="card-value" id="cellV">&mdash;<span class="card-unit">V</span></div>
+      <div class="card-sub" id="busV">Bus: &mdash;V</div>
+      <div class="gauge-wrap">
+        <svg viewBox="0 0 120 70" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="arcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%"   stop-color="#ef4444"/>
+              <stop offset="40%"  stop-color="#f59e0b"/>
+              <stop offset="100%" stop-color="#22c55e"/>
+            </linearGradient>
+          </defs>
+          <path d="M10 60 A50 50 0 0 1 110 60" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="8" stroke-linecap="round"/>
+          <path id="arcFill" d="M10 60 A50 50 0 0 1 110 60" fill="none" stroke="url(#arcGrad)" stroke-width="8" stroke-linecap="round"
+                stroke-dasharray="157" stroke-dashoffset="157" style="transition:stroke-dashoffset 0.7s cubic-bezier(.4,0,.2,1)"/>
+          <text x="60" y="56" text-anchor="middle" fill="rgba(255,255,255,0.2)" font-size="9" font-family="Inter,sans-serif">0.8 &mdash; 1.7 V</text>
+        </svg>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="dot" style="background:#f97316"></span>Temperature</div>
+      <div class="card-value" id="tempVal">&mdash;<span class="card-unit">&deg;C</span></div>
+      <div class="card-sub" id="tempSub">DHT11</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="dot" style="background:#38bdf8"></span>Humidity</div>
+      <div class="card-value" id="humVal">&mdash;<span class="card-unit">%</span></div>
+      <div class="card-sub">DHT11</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="dot" style="background:#ef4444"></span>Leak Score</div>
+      <div class="card-value" id="wetVal">&mdash;</div>
+      <div class="card-sub" id="wetRaw">raw: &mdash;</div>
+      <div class="bar-track"><div class="bar-fill" id="wetBar"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="dot" style="background:#a78bfa"></span>Current</div>
+      <div class="card-value" id="currentVal">&mdash;<span class="card-unit">mA</span></div>
+      <div class="card-sub" id="shuntVal">Shunt: &mdash;mV</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="dot" id="connDot" style="background:var(--none)"></span>Serial Link</div>
+      <div class="card-value" id="connStatus" style="font-size:1.1rem;color:var(--muted);margin-top:.3rem">Disconnected</div>
+      <div class="card-sub">115200 baud</div>
+      <div class="card-sub" id="rxCount" style="margin-top:.3rem">Lines: 0</div>
+    </div>
+  </div>
+
+  <div class="log-panel">
+    <div class="log-header">
+      <span><span class="live-dot off" id="liveDot"></span>Serial Log</span>
+      <button id="clearLog">Clear</button>
+    </div>
+    <div id="log"><span class="log-sys">// Connect to start receiving data...</span></div>
+  </div>
+</main>
+
+<script>
+'use strict';
+var port = null, reader = null, rxCount = 0, keepReading = false;
+var MAX_LOG = 300;
+function $(id){ return document.getElementById(id); }
+
+if (!('serial' in navigator)) {
+  $('noSerialNote').style.display = 'block';
+  $('overlayConnect').disabled = true;
+  $('overlayConnect').textContent = 'Not supported in this browser';
+}
+
+function setUI(on) {
+  // Only touch overlay when going to connected (hide it) or explicit disconnect (show it)
+  if (on) $('overlay').classList.add('hidden');
+  else     $('overlay').classList.remove('hidden');
+  $('connectBtn').textContent = on ? 'Stop' : 'Connect';
+  $('connectBtn').classList[on ? 'add' : 'remove']('connected');
+  $('runTestBtn').style.display = on ? 'inline-flex' : 'none';
+  $('rebootBtn').style.display  = on ? 'inline-flex' : 'none';
+  $('connDot').style.background = on ? 'var(--good)' : 'var(--none)';
+  $('connStatus').textContent   = on ? 'Connected' : 'Disconnected';
+  $('connStatus').style.color   = on ? 'var(--good)' : 'var(--muted)';
+  $('liveDot').classList[on ? 'remove' : 'add']('off');
+}
+
+// Use this during auto-reconnect — keeps overlay hidden, just dims the dot
+function setReconnecting() {
+  $('connDot').style.background = 'var(--suspect)';
+  $('connStatus').textContent   = 'Reconnecting...';
+  $('connStatus').style.color   = 'var(--suspect)';
+  $('liveDot').classList.add('off');
+}
+
+async function connect() {
+  if (port) {
+    await disconnect();
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({
+      baudRate: 115200,
+      bufferSize: 16384,
+      flowControl: 'none'
+    });
+    try {
+      await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    } catch (_) {}
+  } catch(e) {
+    if (e.name !== 'NotFoundError') appendLog('// Connect error: ' + e.message, 'log-sys');
+    port = null;
+    return;
+  }
+  setUI(true);
+  appendLog('// Serial port connected @ 115200 baud.', 'log-sys');
+  readLoop();
+}
+
+async function disconnect() {
+  keepReading = false;
+  if (reader) {
+    try { await reader.cancel(); } catch(_){}
+    try { reader.releaseLock(); } catch(_){}
+    reader = null;
+  }
+  await new Promise(function(r){ setTimeout(r, 150); });
+  if (port) {
+    try { await port.close(); } catch(_){}
+    port = null;
+  }
+  setUI(false);
+  appendLog('// Disconnected.', 'log-sys');
+}
+
+async function rebootESP32() {
+  if (!port) return;
+  appendLog('// Sending reboot command...', 'log-sys');
+  var w = null;
+  try {
+    w = port.writable.getWriter();
+    await w.write(new TextEncoder().encode('START\n'));
+    appendLog('>> Sent START test trigger', 'log-auto');
+  } catch(e) {
+    appendLog('// Command error: ' + e.message, 'log-sys');
+  } finally {
+    try { if (w) w.releaseLock(); } catch(_){}
+  }
+}
+
+async function sendStartTest() {
+  if (!port || !port.writable) {
+    appendLog('// Not connected', 'log-sys');
+    return;
+  }
+  var w = null;
+  try {
+    w = port.writable.getWriter();
+    await w.write(new TextEncoder().encode('START\n'));
+    appendLog('>> Sent START to ESP32', 'log-auto');
+    // Immediate visual feedback on dashboard
+    $('statusBadge').className = 'status-badge SUSPECT';
+    $('statusIcon').textContent = '\u23F3';
+    $('statusText').textContent = 'TESTING';
+    $('statusHeading').textContent = 'Test in Progress...';
+    $('statusDesc').textContent = 'Measuring voltages - follow hardware prompt in log...';
+    $('flagsText').textContent = '';
+  } catch(e) {
+    appendLog('// Send error: ' + e.message, 'log-sys');
+  } finally {
+    try { if (w) w.releaseLock(); } catch(_){}
+  }
+}
+
+async function readLoop() {
+  keepReading = true;
+  var dec = new TextDecoder();
+  var buf = '';
+
+  while (keepReading && port) {
+    try {
+      if (!port.readable) {
+        throw new Error('Port readable stream unavailable');
+      }
+      reader = port.readable.getReader();
+      $('connDot').style.background = 'var(--good)';
+      $('connStatus').textContent   = 'Connected';
+      $('connStatus').style.color   = 'var(--good)';
+      $('liveDot').classList.remove('off');
+
+      while (keepReading) {
+        var res = await reader.read();
+        if (res.done) break;
+        if (!res.value || !res.value.length) continue;
+
+        buf += dec.decode(res.value, { stream: true });
+        if (buf.length > 32768) buf = buf.slice(-8000);
+
+        var parts = buf.split('\n');
+        buf = parts.pop();
+
+        for (var i = 0; i < parts.length; i++) {
+          var line = parts[i].replace(/\r/g, '').trim();
+          if (line.length >= 3) {
+            processLine(line);
+          }
+        }
+      }
+    } catch(err) {
+      if (keepReading) {
+        appendLog('// Stream notice: ' + err.message, 'log-sys');
+      }
+    } finally {
+      if (reader) {
+        try { reader.releaseLock(); } catch(_){}
+        reader = null;
+      }
+    }
+
+    if (!keepReading) break;
+
+    // Handle reconnect cleanly
+    setReconnecting();
+    appendLog('// Reconnecting port in 1s...', 'log-sys');
+    await new Promise(function(r){ setTimeout(r, 1000); });
+
+    try {
+      if (port) {
+        try { await port.close(); } catch(_){}
+      }
+      await new Promise(function(r){ setTimeout(r, 500); });
+      await port.open({
+        baudRate: 115200,
+        bufferSize: 16384,
+        flowControl: 'none'
+      });
+      try {
+        await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      } catch(_){}
+      appendLog('// Reconnected successfully.', 'log-sys');
+    } catch(openErr) {
+      appendLog('// Port disconnected: ' + openErr.message, 'log-sys');
+      keepReading = false;
+      port = null;
+      setUI(false);
+      break;
+    }
+  }
+}
+
+if ('serial' in navigator) {
+  navigator.serial.addEventListener('disconnect', function(event) {
+    if (event.target === port) {
+      appendLog('// Hardware USB device unplugged.', 'log-sys');
+      disconnect();
+    }
+  });
+}
+
+$('connectBtn').addEventListener('click', function(){ port ? disconnect() : connect(); });
+$('overlayConnect').addEventListener('click', connect);
+$('runTestBtn').addEventListener('click', sendStartTest);
+$('rebootBtn').addEventListener('click', rebootESP32);
+$('clearLog').addEventListener('click', function(){ $('log').innerHTML = ''; });
+
+function isLiveLine(line) {
+  return line.indexOf('[LIVE]') >= 0 ||
+         line.indexOf('Cell=') >= 0 ||
+         (line.indexOf('Bus=') >= 0 && line.indexOf('Shunt=') >= 0);
+}
+
+function processLine(line) {
+  rxCount++;
+  $('rxCount').textContent = 'Lines: ' + rxCount;
+
+  if (isLiveLine(line)) {
+    parseLive(line);
+    appendLog(line, 'log-live');
+  } else if (line.indexOf('RESULT:') >= 0) {
+    parseResult(line);
+    appendLog(line, resultCls(line));
+  } else if (line.indexOf('=== TEST START ===') >= 0) {
+    $('statusBadge').className = 'status-badge SUSPECT';
+    $('statusIcon').textContent = '\u23F3';
+    $('statusText').textContent = 'TESTING';
+    $('statusHeading').textContent = 'Test in Progress...';
+    $('statusDesc').textContent = 'Measuring voltages - follow hardware prompt in log...';
+    $('flagsText').textContent = '';
+    appendLog(line, 'log-auto');
+  } else if (line.indexOf('=== TEST END ===') >= 0) {
+    $('lastTest').textContent = 'Last test: ' + new Date().toLocaleTimeString();
+    appendLog(line, 'log-auto');
+  } else if (line.indexOf('Touch load jumper') >= 0 ||
+             line.indexOf('Resting...') >= 0 ||
+             line.indexOf('[AUTO]') >= 0 ||
+             line.indexOf('[CMD]') >= 0 ||
+             line.indexOf('===') >= 0 ||
+             line.indexOf('Ready.') >= 0) {
+    appendLog(line, 'log-auto');
+  } else {
+    appendLog(line, 'log-sys');
+  }
+}
+
+function parseVal(line, re) {
+  var m = line.match(re);
+  if (!m) return null;
+  if (m[1].toLowerCase() === 'nan') return NaN;
+  return parseFloat(m[1]);
+}
+
+function parseLive(line) {
+  var t    = parseVal(line, /T=([-\d.]+|nan)\s*C/i);
+  var h    = parseVal(line, /H=([-\d.]+|nan)\s*%/i);
+  var wet  = parseVal(line, /\bwet=([-\d.]+|nan)/i);
+  var wr   = parseVal(line, /wet_raw=([-\d.]+|nan)/i);
+  var cell = parseVal(line, /Cell=([-\d.]+|nan)\s*V/i);
+  var bus  = parseVal(line, /Bus=([-\d.]+|nan)\s*V/i);
+  var shnt = parseVal(line, /Shunt=([-\d.]+|nan)\s*mV/i);
+  var curr = parseVal(line, /\bI=([-\d.]+|nan)\s*mA/i);
+
+  if (t !== null) {
+    if (isNaN(t)) {
+      $('tempVal').innerHTML = '<span style="font-size:1.2rem;color:var(--suspect)">N/A</span>';
+      $('tempSub').textContent = 'DHT11 - no reading';
+    } else {
+      $('tempVal').innerHTML = t.toFixed(1) + '<span class="card-unit">°C</span>';
+      $('tempSub').textContent = 'DHT11';
+      $('tempVal').style.color = 'var(--text)';
+    }
+  }
+  if (h !== null) {
+    if (isNaN(h)) {
+      $('humVal').innerHTML = '<span style="font-size:1.2rem;color:var(--suspect)">N/A</span>';
+    } else {
+      $('humVal').innerHTML = h.toFixed(1) + '<span class="card-unit">%</span>';
+    }
+  }
+  if (wet !== null) {
+    if (isNaN(wet)) {
+      $('wetVal').innerHTML = '<span style="font-size:1.2rem;color:var(--suspect)">N/A</span>';
+    } else {
+      var wDisp = Math.max(0, wet);
+      $('wetVal').textContent = wDisp.toFixed(3);
+      $('wetBar').style.width = Math.min(wDisp * 400, 100) + '%';
+      $('wetVal').style.color = wDisp > 0.25 ? 'var(--leaking)' : wDisp > 0.10 ? 'var(--suspect)' : 'var(--good)';
+    }
+  }
+  if (wr !== null)   $('wetRaw').textContent    = isNaN(wr)   ? 'raw: N/A'   : 'raw: '   + wr.toFixed(0);
+  if (cell !== null) {
+    if (isNaN(cell)) {
+      $('cellV').innerHTML = '<span style="font-size:1.2rem;color:var(--leaking)">ERR</span>';
+    } else {
+      $('cellV').innerHTML = cell.toFixed(3) + '<span class="card-unit">V</span>';
+      $('cellV').style.color = cell < 1.25 ? 'var(--leaking)' : cell < 1.45 ? 'var(--suspect)' : 'var(--good)';
+      setArc(cell);
+    }
+  }
+  if (bus  !== null) $('busV').textContent      = isNaN(bus)  ? 'Bus: N/A'   : 'Bus: '   + bus.toFixed(3)  + 'V';
+  if (shnt !== null) $('shuntVal').textContent  = isNaN(shnt) ? 'Shunt: N/A' : 'Shunt: ' + shnt.toFixed(2) + 'mV';
+  if (curr !== null) $('currentVal').innerHTML  = isNaN(curr) ? '<span style="font-size:1.2rem">N/A</span>' : curr.toFixed(1) + '<span class="card-unit">mA</span>';
+}
+
+function setArc(v) {
+  var pct = Math.max(0, Math.min(1, (v - 0.8) / 0.9));
+  $('arcFill').style.strokeDashoffset = (157 * (1 - pct)).toFixed(1);
+}
+
+var RESULTS = {
+  GOOD:    { icon: '\u2705', heading: 'Battery Good',      desc: 'No signs of leakage. Voltage and response within spec.' },
+  SUSPECT: { icon: '\u26A0\uFE0F', heading: 'Battery Suspect', desc: 'One or more flags raised - weak, old, or early-stage leak.' },
+  LEAKING: { icon: '\uD83D\uDEA8', heading: 'Leakage Detected!', desc: 'High moisture or critical flags. Dispose of this battery safely.' }
+};
+
+function parseResult(line) {
+  var key = null;
+  var m = line.match(/RESULT:\s*(GOOD|SUSPECT|LEAKING)/i);
+  if (m) {
+    key = m[1].toUpperCase();
+  } else {
+    var keys = Object.keys(RESULTS);
+    for (var i = 0; i < keys.length; i++) {
+      if (line.indexOf(keys[i]) >= 0) { key = keys[i]; break; }
+    }
+  }
+  if (!key || !RESULTS[key]) return;
+  var r = RESULTS[key];
+  var flagM = line.match(/flags=(\d+)/i);
+  $('statusBadge').className     = 'status-badge ' + key;
+  $('statusIcon').textContent     = r.icon;
+  $('statusText').textContent     = key;
+  $('statusHeading').textContent  = r.heading;
+  $('statusDesc').textContent     = r.desc;
+  $('flagsText').textContent      = flagM ? 'Suspect flags = ' + flagM[1] : '';
+  $('lastTest').textContent       = 'Last test: ' + new Date().toLocaleTimeString();
+}
+
+function resultCls(line) {
+  if (line.indexOf('LEAKING') >= 0) return 'log-leaking';
+  if (line.indexOf('SUSPECT') >= 0) return 'log-suspect';
+  if (line.indexOf('GOOD') >= 0)    return 'log-good';
+  return 'log-auto';
+}
+
+function appendLog(text, cls) {
+  var log = $('log');
+  var d = document.createElement('div');
+  d.className = cls;
+  d.style.whiteSpace = 'pre-wrap';
+  d.style.wordBreak = 'break-all';
+  d.style.lineHeight = '1.4';
+  d.style.marginBottom = '2px';
+  d.textContent = text;
+  log.appendChild(d);
+  if (log.childNodes.length > MAX_LOG) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+</script>
+</body>
+</html>
